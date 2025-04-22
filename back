@@ -1,0 +1,812 @@
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+import json
+from datetime import datetime
+import shutil
+import os
+import csv
+
+INVENTARIO_FILE = "inventario.json"
+VENTAS_FILE = "ventas.json"
+BACKUP_DIR = "backups"
+
+class PuntoDeVenta:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Punto de Venta Mejorado")
+        self.root.geometry("1000x700")
+
+        self.inventario = self.cargar_inventario()
+        self.ventas = self.cargar_ventas()
+
+        self.estilo_visual()
+        self.menu_principal()
+
+    def estilo_visual(self):
+        estilo = ttk.Style()
+        estilo.theme_use('clam')
+        estilo.configure("TButton", padding=6, relief="flat", background="#ccc")
+        estilo.configure("Treeview", font=('Helvetica', 10))
+        estilo.configure("Treeview.Heading", font=('Helvetica', 11, 'bold'))
+        estilo.configure("Treeview.Treeview", rowheight=25)
+        estilo.map("Treeview", background=[('selected', '#347083')])
+
+    def guardar_inventario(self):
+        with open(INVENTARIO_FILE, "w") as f:
+            json.dump(self.inventario, f, indent=4)
+        self.hacer_backup(INVENTARIO_FILE)
+
+    def cargar_inventario(self):
+        try:
+            with open(INVENTARIO_FILE, "r") as f:
+                inventario = json.load(f)
+                for producto in inventario:
+                    if "Categoría" not in producto:
+                        producto["Categoría"] = "Sin categoría"
+                return inventario
+        except (FileNotFoundError, json.JSONDecodeError):
+            return []
+
+    def guardar_ventas(self):
+        with open(VENTAS_FILE, "w") as f:
+            json.dump(self.ventas, f, indent=4)
+        self.hacer_backup(VENTAS_FILE)
+
+    def cargar_ventas(self):
+        try:
+            with open(VENTAS_FILE, "r") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return []
+
+    def hacer_backup(self, filename):
+        if not os.path.exists(BACKUP_DIR):
+            os.makedirs(BACKUP_DIR)
+        base = os.path.basename(filename)
+        time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_file = f"{BACKUP_DIR}/{base}_{time}.bak"
+        shutil.copy(filename, backup_file)
+
+    def limpiar_pantalla(self):
+        for widget in self.root.winfo_children():
+            widget.destroy()
+
+    def menu_principal(self):
+        self.limpiar_pantalla()
+        frame = tk.Frame(self.root, padx=20, pady=20)
+        frame.pack(expand=True, fill=tk.BOTH)
+
+        tk.Label(frame, text="Sistema de Punto de Venta", 
+                font=('Helvetica', 16, 'bold')).pack(pady=20)
+
+        opciones = [
+            ("📦 Inventario", self.mostrar_inventario),
+            ("💰 Ventas", self.mostrar_ventas),
+            ("📊 Reportes", self.mostrar_reportes)
+        ]
+        
+        for texto, comando in opciones:
+            btn = ttk.Button(frame, text=texto, command=comando, style='TButton')
+            btn.pack(expand=True, fill=tk.BOTH, pady=10, ipady=10)
+
+    def mostrar_inventario(self):
+        self.limpiar_pantalla()
+        
+        # Frame superior con botones
+        frame_botones = tk.Frame(self.root)
+        frame_botones.pack(fill=tk.X, padx=10, pady=10)
+        
+        botones = [
+            ("➕ Agregar Producto", self.agregar_producto),
+            ("🔍 Consultar Ítem", self.consultar_item),
+            ("🗑️ Eliminar Producto", self.eliminar_producto),
+            ("🧹 Vaciar Inventario", self.vaciar_inventario),
+            ("🔙 Volver", self.menu_principal)
+        ]
+        
+        for texto, comando in botones:
+            ttk.Button(frame_botones, text=texto, command=comando).pack(side=tk.LEFT, padx=5)
+
+        # Frame para el Treeview
+        frame_tree = tk.Frame(self.root)
+        frame_tree.pack(expand=True, fill=tk.BOTH, padx=10, pady=5)
+        
+        # Treeview para inventario
+        columnas = ("Nombre", "Marca", "Categoría", "Precio", "Stock")
+        self.tree_inventario = ttk.Treeview(frame_tree, columns=columnas, show="headings", selectmode='browse')
+        
+        # Configurar columnas
+        for col in columnas:
+            self.tree_inventario.heading(col, text=col)
+            self.tree_inventario.column(col, width=120, anchor=tk.CENTER)
+        
+        # Scrollbar
+        scrollbar = ttk.Scrollbar(frame_tree, orient="vertical", command=self.tree_inventario.yview)
+        self.tree_inventario.configure(yscrollcommand=scrollbar.set)
+        
+        self.tree_inventario.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Actualizar lista
+        self.actualizar_lista_inventario()
+
+    def vaciar_inventario(self):
+        if not self.inventario:
+            messagebox.showinfo("Inventario Vacío", "El inventario ya está vacío")
+            return
+            
+        confirmacion = messagebox.askyesno(
+            "Confirmar Vaciado",
+            "⚠️ ¿Está seguro que desea eliminar TODOS los productos del inventario?\n\nEsta acción no se puede deshacer.",
+            icon='warning'
+        )
+        
+        if confirmacion:
+            self.inventario = []
+            self.guardar_inventario()
+            self.actualizar_lista_inventario()
+            messagebox.showinfo("Inventario Vaciado", "Todos los productos han sido eliminados del inventario")
+
+    def eliminar_producto(self):
+        seleccionado = self.tree_inventario.selection()
+        if not seleccionado:
+            messagebox.showwarning("Selección Requerida", "Por favor seleccione un producto para eliminar")
+            return
+            
+        item = self.tree_inventario.item(seleccionado[0])
+        valores = item['values']
+        
+        if not valores or len(valores) < 3:
+            messagebox.showerror("Error", "No se pudo obtener la información del producto seleccionado")
+            return
+            
+        nombre, marca, categoria = valores[0], valores[1], valores[2]
+        
+        confirmacion = messagebox.askyesno(
+            "Confirmar Eliminación",
+            f"¿Está seguro que desea eliminar este producto?\n\n"
+            f"Nombre: {nombre}\nMarca: {marca}\nCategoría: {categoria}",
+            icon='question'
+        )
+        
+        if confirmacion:
+            encontrado = False
+            for i, producto in enumerate(self.inventario):
+                if (producto['Nombre'] == nombre and 
+                    producto['Marca'] == marca and 
+                    producto['Categoría'] == categoria):
+                    del self.inventario[i]
+                    encontrado = True
+                    break
+            
+            if encontrado:
+                self.guardar_inventario()
+                self.actualizar_lista_inventario()
+                messagebox.showinfo("Producto Eliminado", "El producto ha sido eliminado correctamente")
+            else:
+                messagebox.showerror("Error", "No se pudo encontrar el producto en el inventario")
+
+    def agregar_producto(self):
+        top = tk.Toplevel(self.root)
+        top.title("Agregar Nuevo Producto")
+        top.geometry("400x400")
+        top.resizable(False, False)
+        
+        # Variables para los campos
+        campos = {
+            "Nombre": tk.StringVar(),
+            "Marca": tk.StringVar(),
+            "Categoría": tk.StringVar(),
+            "Precio": tk.StringVar(),
+            "Stock": tk.StringVar(value="1")
+        }
+        
+        # Crear campos del formulario
+        for campo, var in campos.items():
+            frame = tk.Frame(top, padx=5, pady=5)
+            frame.pack(fill=tk.X)
+            
+            tk.Label(frame, text=f"{campo}:", width=12, anchor=tk.W).pack(side=tk.LEFT)
+            
+            if campo in ["Precio", "Stock"]:
+                tk.Entry(frame, textvariable=var, validate="key", 
+                        validatecommand=(top.register(self.validar_numero), '%P')).pack(side=tk.RIGHT, fill=tk.X)
+            else:
+                tk.Entry(frame, textvariable=var).pack(side=tk.RIGHT, fill=tk.X)
+        
+        # Botones
+        frame_botones = tk.Frame(top, pady=10)
+        frame_botones.pack(fill=tk.X)
+        
+        ttk.Button(frame_botones, text="Guardar", command=lambda: self.guardar_nuevo_producto(top, campos)).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_botones, text="Cancelar", command=top.destroy).pack(side=tk.RIGHT, padx=5)
+
+    def validar_numero(self, valor):
+        if valor == "":
+            return True
+        try:
+            float(valor)
+            return True
+        except ValueError:
+            return False
+
+    def guardar_nuevo_producto(self, top, campos):
+        try:
+            # Validar campos obligatorios
+            if not campos["Nombre"].get().strip():
+                messagebox.showerror("Error", "El nombre del producto es obligatorio")
+                return
+                
+            # Crear diccionario con los datos
+            datos = {
+                "Nombre": campos["Nombre"].get().strip(),
+                "Marca": campos["Marca"].get().strip(),
+                "Categoría": campos["Categoría"].get().strip() or "Sin categoría",
+                "Precio": float(campos["Precio"].get() or 0),
+                "Stock": int(campos["Stock"].get() or 1)
+            }
+            
+            # Verificar si el producto ya existe
+            nombre_norm = datos["Nombre"].lower()
+            marca_norm = datos["Marca"].lower()
+            categoria_norm = datos["Categoría"].lower()
+            
+            for prod in self.inventario:
+                if (prod["Nombre"].lower() == nombre_norm and 
+                    prod["Marca"].lower() == marca_norm and 
+                    prod["Categoría"].lower() == categoria_norm):
+                    
+                    # Actualizar stock si el producto existe
+                    prod["Stock"] += datos["Stock"]
+                    self.guardar_inventario()
+                    self.actualizar_lista_inventario()
+                    messagebox.showinfo("Producto Actualizado", f"Stock actualizado. Nuevo stock: {prod['Stock']}")
+                    top.destroy()
+                    return
+            
+            # Agregar nuevo producto
+            self.inventario.append(datos)
+            self.guardar_inventario()
+            self.actualizar_lista_inventario()
+            messagebox.showinfo("Producto Agregado", "Nuevo producto agregado al inventario")
+            top.destroy()
+            
+        except ValueError as e:
+            messagebox.showerror("Error", f"Datos inválidos:\n{str(e)}")
+
+    def consultar_item(self):
+        top = tk.Toplevel(self.root)
+        top.title("Consultar Producto")
+        top.geometry("500x400")
+        
+        # Frame de búsqueda
+        frame_busqueda = tk.Frame(top, padx=10, pady=10)
+        frame_busqueda.pack(fill=tk.X)
+        
+        # Campos de búsqueda
+        campos_busqueda = ["Nombre", "Marca", "Categoría"]
+        self.entry_busqueda = {}
+        
+        for campo in campos_busqueda:
+            frame = tk.Frame(frame_busqueda)
+            frame.pack(fill=tk.X, pady=2)
+            
+            tk.Label(frame, text=f"{campo}:", width=10).pack(side=tk.LEFT)
+            entry = tk.Entry(frame)
+            entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+            self.entry_busqueda[campo] = entry
+        
+        # Botón de búsqueda
+        ttk.Button(frame_busqueda, text="Buscar Producto", command=self.buscar_producto_consulta).pack(pady=10)
+        
+        # Frame de resultados
+        frame_resultados = tk.Frame(top, padx=10, pady=10)
+        frame_resultados.pack(expand=True, fill=tk.BOTH)
+        
+        # Etiquetas para mostrar los detalles
+        self.labels_resultado = {}
+        detalles = ["Nombre", "Marca", "Categoría", "Precio", "Stock"]
+        
+        for detalle in detalles:
+            frame = tk.Frame(frame_resultados)
+            frame.pack(fill=tk.X, pady=2)
+            
+            tk.Label(frame, text=f"{detalle}:", width=12, anchor=tk.W, font=('Helvetica', 10, 'bold')).pack(side=tk.LEFT)
+            label_valor = tk.Label(frame, text="", anchor=tk.W, font=('Helvetica', 10))
+            label_valor.pack(side=tk.LEFT)
+            self.labels_resultado[detalle] = label_valor
+        
+        # Botón cerrar
+        ttk.Button(top, text="Cerrar", command=top.destroy).pack(pady=10)
+
+    def buscar_producto_consulta(self):
+        # Obtener criterios de búsqueda
+        nombre = self.entry_busqueda["Nombre"].get().strip().lower()
+        marca = self.entry_busqueda["Marca"].get().strip().lower()
+        categoria = self.entry_busqueda["Categoría"].get().strip().lower()
+        
+        # Limpiar resultados anteriores
+        for detalle in self.labels_resultado:
+            self.labels_resultado[detalle].config(text="")
+        
+        # Buscar productos que coincidan
+        productos_encontrados = []
+        
+        for prod in self.inventario:
+            nombre_match = not nombre or nombre in prod["Nombre"].lower()
+            marca_match = not marca or marca in prod["Marca"].lower()
+            categoria_match = not categoria or categoria in prod["Categoría"].lower()
+            
+            if nombre_match and marca_match and categoria_match:
+                productos_encontrados.append(prod)
+        
+        # Mostrar resultados
+        if not productos_encontrados:
+            messagebox.showinfo("Resultados", "No se encontraron productos con esos criterios")
+            return
+        
+        if len(productos_encontrados) > 1:
+            messagebox.showinfo("Resultados", f"Se encontraron {len(productos_encontrados)} productos. Mostrando el primero.")
+        
+        # Mostrar detalles del primer producto encontrado
+        producto = productos_encontrados[0]
+        self.labels_resultado["Nombre"].config(text=producto["Nombre"])
+        self.labels_resultado["Marca"].config(text=producto["Marca"])
+        self.labels_resultado["Categoría"].config(text=producto["Categoría"])
+        self.labels_resultado["Precio"].config(text=f"${producto['Precio']:.2f}")
+        self.labels_resultado["Stock"].config(text=producto["Stock"])
+
+    def actualizar_lista_inventario(self):
+        # Limpiar treeview
+        for item in self.tree_inventario.get_children():
+            self.tree_inventario.delete(item)
+            
+        # Ordenar inventario por nombre
+        inventario_ordenado = sorted(self.inventario, key=lambda x: x['Nombre'])
+        
+        # Agregar productos al treeview
+        for prod in inventario_ordenado:
+            self.tree_inventario.insert("", tk.END, values=(
+                prod.get("Nombre", ""),
+                prod.get("Marca", ""),
+                prod.get("Categoría", ""),
+                f"${prod.get('Precio', 0):.2f}",
+                prod.get("Stock", 0)
+            ))
+
+    def mostrar_ventas(self):
+        self.limpiar_pantalla()
+        
+        # Frame superior con botones
+        frame_botones = tk.Frame(self.root)
+        frame_botones.pack(fill=tk.X, padx=10, pady=10)
+        
+        ttk.Button(frame_botones, text="➕ Registrar Venta", command=self.registrar_venta).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_botones, text="🔙 Volver", command=self.menu_principal).pack(side=tk.RIGHT, padx=5)
+
+        # Frame para el Treeview
+        frame_tree = tk.Frame(self.root)
+        frame_tree.pack(expand=True, fill=tk.BOTH, padx=10, pady=5)
+        
+        # Treeview para ventas
+        columnas = ("Fecha", "Hora", "Nombre", "Marca", "Categoría", "Cantidad", "Total")
+        self.tree_ventas = ttk.Treeview(frame_tree, columns=columnas, show="headings")
+        
+        # Configurar columnas
+        for col in columnas:
+            self.tree_ventas.heading(col, text=col)
+            self.tree_ventas.column(col, width=100, anchor=tk.CENTER if col in ["Cantidad", "Total"] else tk.W)
+        
+        # Scrollbar
+        scrollbar = ttk.Scrollbar(frame_tree, orient="vertical", command=self.tree_ventas.yview)
+        self.tree_ventas.configure(yscrollcommand=scrollbar.set)
+        
+        self.tree_ventas.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Actualizar lista de ventas
+        self.actualizar_lista_ventas()
+
+    def registrar_venta(self):
+        top = tk.Toplevel(self.root)
+        top.title("Registrar Nueva Venta")
+        top.geometry("600x500")
+        
+        # Frame de búsqueda
+        frame_busqueda = tk.Frame(top, padx=10, pady=10)
+        frame_busqueda.pack(fill=tk.X)
+        
+        tk.Label(frame_busqueda, text="Buscar producto:").pack(side=tk.LEFT)
+        self.entry_buscar_venta = tk.Entry(frame_busqueda)
+        self.entry_buscar_venta.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+        
+        ttk.Button(frame_busqueda, text="Buscar", command=self.buscar_producto_venta).pack(side=tk.LEFT)
+        
+        # Lista de resultados
+        frame_resultados = tk.Frame(top)
+        frame_resultados.pack(fill=tk.BOTH, padx=10, pady=5, expand=True)
+        
+        self.lista_productos = tk.Listbox(frame_resultados)
+        scrollbar = tk.Scrollbar(frame_resultados, orient="vertical", command=self.lista_productos.yview)
+        self.lista_productos.configure(yscrollcommand=scrollbar.set)
+        
+        self.lista_productos.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Frame de detalles de venta
+        frame_detalles = tk.Frame(top, padx=10, pady=10)
+        frame_detalles.pack(fill=tk.X)
+        
+        campos = ["Nombre", "Marca", "Categoría", "Precio Unitario", "Stock Disponible", "Cantidad a Vender"]
+        self.entry_detalles_venta = {}
+        
+        for campo in campos:
+            frame = tk.Frame(frame_detalles)
+            frame.pack(fill=tk.X, pady=2)
+            
+            tk.Label(frame, text=f"{campo}:", width=15, anchor=tk.W).pack(side=tk.LEFT)
+            
+            if campo == "Cantidad a Vender":
+                entry = tk.Entry(frame, validate="key", 
+                               validatecommand=(top.register(self.validar_numero), '%P'))
+            else:
+                entry = tk.Entry(frame, state='readonly')
+                
+            entry.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+            self.entry_detalles_venta[campo] = entry
+        
+        # Botones
+        frame_botones = tk.Frame(top, pady=10)
+        frame_botones.pack(fill=tk.X)
+        
+        ttk.Button(frame_botones, text="Registrar Venta", command=self.procesar_venta).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_botones, text="Cancelar", command=top.destroy).pack(side=tk.RIGHT, padx=5)
+
+    def buscar_producto_venta(self):
+        criterio = self.entry_buscar_venta.get().strip().lower()
+        self.lista_productos.delete(0, tk.END)
+        
+        if not criterio:
+            return
+            
+        for prod in self.inventario:
+            if (criterio in prod["Nombre"].lower() or 
+                criterio in prod["Marca"].lower()):
+                
+                self.lista_productos.insert(tk.END, 
+                    f"{prod['Nombre']} | {prod['Marca']} | {prod['Categoría']} | ${prod['Precio']:.2f} | Stock: {prod['Stock']}")
+        
+        # Configurar selección para actualizar detalles
+        self.lista_productos.bind('<<ListboxSelect>>', self.actualizar_detalles_venta)
+
+    def actualizar_detalles_venta(self, event):
+        seleccion = self.lista_productos.curselection()
+        if not seleccion:
+            return
+            
+        producto_str = self.lista_productos.get(seleccion[0])
+        partes = producto_str.split(" | ")
+        
+        # Extraer información del producto seleccionado
+        nombre = partes[0]
+        marca = partes[1]
+        categoria = partes[2]
+        
+        # Buscar producto completo en el inventario
+        for prod in self.inventario:
+            if (prod["Nombre"] == nombre and 
+                prod["Marca"] == marca and 
+                prod["Categoría"] == categoria):
+                
+                # Actualizar campos de detalles
+                self.entry_detalles_venta["Nombre"].config(state='normal')
+                self.entry_detalles_venta["Nombre"].delete(0, tk.END)
+                self.entry_detalles_venta["Nombre"].insert(0, prod["Nombre"])
+                self.entry_detalles_venta["Nombre"].config(state='readonly')
+                
+                self.entry_detalles_venta["Marca"].config(state='normal')
+                self.entry_detalles_venta["Marca"].delete(0, tk.END)
+                self.entry_detalles_venta["Marca"].insert(0, prod["Marca"])
+                self.entry_detalles_venta["Marca"].config(state='readonly')
+                
+                self.entry_detalles_venta["Categoría"].config(state='normal')
+                self.entry_detalles_venta["Categoría"].delete(0, tk.END)
+                self.entry_detalles_venta["Categoría"].insert(0, prod["Categoría"])
+                self.entry_detalles_venta["Categoría"].config(state='readonly')
+                
+                self.entry_detalles_venta["Precio Unitario"].config(state='normal')
+                self.entry_detalles_venta["Precio Unitario"].delete(0, tk.END)
+                self.entry_detalles_venta["Precio Unitario"].insert(0, f"${prod['Precio']:.2f}")
+                self.entry_detalles_venta["Precio Unitario"].config(state='readonly')
+                
+                self.entry_detalles_venta["Stock Disponible"].config(state='normal')
+                self.entry_detalles_venta["Stock Disponible"].delete(0, tk.END)
+                self.entry_detalles_venta["Stock Disponible"].insert(0, str(prod["Stock"]))
+                self.entry_detalles_venta["Stock Disponible"].config(state='readonly')
+                
+                self.entry_detalles_venta["Cantidad a Vender"].delete(0, tk.END)
+                self.entry_detalles_venta["Cantidad a Vender"].insert(0, "1")
+                break
+
+    def procesar_venta(self):
+        try:
+            # Obtener datos del producto
+            nombre = self.entry_detalles_venta["Nombre"].get()
+            marca = self.entry_detalles_venta["Marca"].get()
+            categoria = self.entry_detalles_venta["Categoría"].get()
+            cantidad = int(self.entry_detalles_venta["Cantidad a Vender"].get())
+            
+            if cantidad <= 0:
+                messagebox.showerror("Error", "La cantidad debe ser mayor que cero")
+                return
+            
+            # Buscar producto en inventario
+            for prod in self.inventario:
+                if (prod["Nombre"] == nombre and 
+                    prod["Marca"] == marca and 
+                    prod["Categoría"] == categoria):
+                    
+                    if prod["Stock"] < cantidad:
+                        messagebox.showerror("Error", f"Stock insuficiente. Disponible: {prod['Stock']}")
+                        return
+                    
+                    # Actualizar stock
+                    prod["Stock"] -= cantidad
+                    
+                    # Registrar venta
+                    hora_actual = datetime.now()
+                    venta = {
+                        "Hora": hora_actual.strftime("%Y-%m-%d %H:%M:%S"),
+                        "Nombre": nombre,
+                        "Marca": marca,
+                        "Categoría": categoria,
+                        "Cantidad": cantidad,
+                        "Total": cantidad * prod["Precio"]
+                    }
+                    
+                    self.ventas.append(venta)
+                    self.guardar_inventario()
+                    self.guardar_ventas()
+                    
+                    # Actualizar listas
+                    self.actualizar_lista_ventas()
+                    self.actualizar_lista_inventario()
+                    
+                    messagebox.showinfo("Venta Registrada", 
+                        f"Venta registrada correctamente\n\n"
+                        f"Producto: {nombre}\n"
+                        f"Cantidad: {cantidad}\n"
+                        f"Total: ${venta['Total']:.2f}")
+                    
+                    # Cerrar ventana de venta
+                    self.lista_productos.master.master.destroy()
+                    return
+            
+            messagebox.showerror("Error", "No se pudo completar la venta. Producto no encontrado")
+            
+        except ValueError:
+            messagebox.showerror("Error", "Ingrese una cantidad válida (número entero positivo)")
+
+    def actualizar_lista_ventas(self):
+        # Limpiar treeview
+        for item in self.tree_ventas.get_children():
+            self.tree_ventas.delete(item)
+            
+        # Ordenar ventas por fecha (más reciente primero)
+        ventas_ordenadas = sorted(self.ventas, 
+                                key=lambda x: datetime.strptime(x["Hora"], "%Y-%m-%d %H:%M:%S"), 
+                                reverse=True)
+        
+        # Agregar ventas al treeview
+        for venta in ventas_ordenadas:
+            fecha_hora = datetime.strptime(venta["Hora"], "%Y-%m-%d %H:%M:%S")
+            fecha_str = fecha_hora.strftime("%Y-%m-%d")
+            hora_str = fecha_hora.strftime("%H:%M:%S")
+            
+            self.tree_ventas.insert("", tk.END, values=(
+                fecha_str,
+                hora_str,
+                venta["Nombre"],
+                venta["Marca"],
+                venta["Categoría"],
+                venta["Cantidad"],
+                f"${venta['Total']:.2f}"
+            ))
+
+    def mostrar_reportes(self):
+        self.limpiar_pantalla()
+        
+        # Frame superior con filtros
+        frame_filtros = tk.Frame(self.root, padx=10, pady=10)
+        frame_filtros.pack(fill=tk.X)
+        
+        # Filtro por año
+        tk.Label(frame_filtros, text="Año (YYYY):", width=10).pack(side=tk.LEFT)
+        self.entry_anio = tk.Entry(frame_filtros, width=8)
+        self.entry_anio.pack(side=tk.LEFT)
+        
+        # Filtro por mes
+        tk.Label(frame_filtros, text="Mes (1-12):", width=10).pack(side=tk.LEFT, padx=5)
+        self.entry_mes = tk.Entry(frame_filtros, width=5)
+        self.entry_mes.pack(side=tk.LEFT)
+        
+        # Filtro por día
+        tk.Label(frame_filtros, text="Día (1-31):", width=10).pack(side=tk.LEFT, padx=5)
+        self.entry_dia = tk.Entry(frame_filtros, width=5)
+        self.entry_dia.pack(side=tk.LEFT)
+        
+        # Filtro por categoría
+        tk.Label(frame_filtros, text="Categoría:", width=10).pack(side=tk.LEFT, padx=5)
+        self.entry_cat = tk.Entry(frame_filtros)
+        self.entry_cat.pack(side=tk.LEFT, expand=True, fill=tk.X)
+        
+        # Botones
+        ttk.Button(frame_filtros, text="Filtrar", command=self.filtrar_reportes).pack(side=tk.LEFT, padx=10)
+        ttk.Button(frame_filtros, text="Exportar CSV", command=self.exportar_reporte_csv).pack(side=tk.LEFT)
+        
+        # Frame para el Treeview
+        frame_tree = tk.Frame(self.root)
+        frame_tree.pack(expand=True, fill=tk.BOTH, padx=10, pady=5)
+        
+        # Treeview para reportes
+        columnas = ("Fecha", "Hora", "Nombre", "Marca", "Categoría", "Cantidad", "Total")
+        self.tree_reportes = ttk.Treeview(frame_tree, columns=columnas, show="headings")
+        
+        # Configurar columnas
+        for col in columnas:
+            self.tree_reportes.heading(col, text=col)
+            self.tree_reportes.column(col, width=100, anchor=tk.CENTER if col in ["Cantidad", "Total"] else tk.W)
+        
+        # Scrollbar
+        scrollbar = ttk.Scrollbar(frame_tree, orient="vertical", command=self.tree_reportes.yview)
+        self.tree_reportes.configure(yscrollcommand=scrollbar.set)
+        
+        self.tree_reportes.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Botón volver
+        ttk.Button(self.root, text="Volver", command=self.menu_principal).pack(pady=10)
+        
+        # Mostrar todos los reportes inicialmente
+        self.filtrar_reportes()
+
+    def validar_filtros_fecha(self):
+        anio = self.entry_anio.get().strip()
+        mes = self.entry_mes.get().strip()
+        dia = self.entry_dia.get().strip()
+        
+        try:
+            # Validar año
+            if anio and (len(anio) != 4 or not anio.isdigit() or int(anio) < 2000 or int(anio) > datetime.now().year):
+                return False, "Año inválido. Debe ser entre 2000 y el año actual"
+                
+            # Validar mes
+            if mes and (not mes.isdigit() or int(mes) < 1 or int(mes) > 12):
+                return False, "Mes inválido. Debe ser entre 1 y 12"
+                
+            # Validar día
+            if dia and (not dia.isdigit() or int(dia) < 1 or int(dia) > 31):
+                return False, "Día inválido. Debe ser entre 1 y 31"
+                
+            # Validar combinación día/mes (ej. no 31 de abril)
+            if anio and mes and dia:
+                try:
+                    datetime(int(anio), int(mes), int(dia))
+                except ValueError:
+                    return False, "Fecha inválida. Combinación día/mes incorrecta"
+                    
+            return True, ""
+            
+        except ValueError:
+            return False, "Error en los datos de fecha"
+
+    def filtrar_reportes(self):
+        # Validar filtros de fecha
+        valido, mensaje = self.validar_filtros_fecha()
+        if not valido:
+            messagebox.showerror("Error en filtros", mensaje)
+            return
+        
+        # Obtener valores de los filtros
+        anio = self.entry_anio.get().strip()
+        mes = self.entry_mes.get().strip()
+        dia = self.entry_dia.get().strip()
+        categoria = self.entry_cat.get().strip().lower()
+        
+        # Limpiar treeview
+        for item in self.tree_reportes.get_children():
+            self.tree_reportes.delete(item)
+        
+        total = 0
+        ventas_filtradas = 0
+        
+        for venta in self.ventas:
+            try:
+                fecha_hora = datetime.strptime(venta["Hora"], "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                continue
+            
+            # Aplicar filtros
+            cumple_filtro = True
+            
+            if anio and fecha_hora.year != int(anio):
+                cumple_filtro = False
+            if mes and fecha_hora.month != int(mes):
+                cumple_filtro = False
+            if dia and fecha_hora.day != int(dia):
+                cumple_filtro = False
+            if categoria and categoria not in venta["Categoría"].lower():
+                cumple_filtro = False
+                
+            if cumple_filtro:
+                # Separar fecha y hora
+                fecha_str = fecha_hora.strftime("%Y-%m-%d")
+                hora_str = fecha_hora.strftime("%H:%M:%S")
+                
+                self.tree_reportes.insert("", tk.END, values=(
+                    fecha_str,
+                    hora_str,
+                    venta["Nombre"],
+                    venta["Marca"],
+                    venta["Categoría"],
+                    venta["Cantidad"],
+                    f"${venta['Total']:.2f}"
+                ))
+                total += venta["Total"]
+                ventas_filtradas += 1
+        
+        # Mostrar resumen
+        if ventas_filtradas > 0:
+            self.tree_reportes.insert("", tk.END, values=(
+                "", "", "", "", "TOTAL:", ventas_filtradas, f"${total:.2f}"
+            ), tags=('total',))
+            self.tree_reportes.tag_configure('total', background='#f0f0f0', font=('Helvetica', 10, 'bold'))
+        else:
+            self.tree_reportes.insert("", tk.END, values=(
+                "No se encontraron ventas con los filtros aplicados", "", "", "", "", "", ""
+            ))
+
+    def exportar_reporte_csv(self):
+        # Obtener los items del treeview
+        items = self.tree_reportes.get_children()
+        if not items:
+            messagebox.showwarning("Exportar", "No hay datos para exportar")
+            return
+            
+        # Pedir ubicación para guardar el archivo
+        archivo = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("Archivos CSV", "*.csv"), ("Todos los archivos", "*.*")],
+            title="Guardar reporte como CSV"
+        )
+        
+        if not archivo:
+            return
+            
+        try:
+            with open(archivo, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                
+                # Escribir encabezados
+                encabezados = [self.tree_reportes.heading(col)['text'] for col in self.tree_reportes['columns']]
+                writer.writerow(encabezados)
+                
+                # Escribir datos
+                for item in items:
+                    if 'total' not in self.tree_reportes.item(item, 'tags'):
+                        valores = self.tree_reportes.item(item, 'values')
+                        writer.writerow(valores)
+                
+                # Escribir total si existe
+                for item in items:
+                    if 'total' in self.tree_reportes.item(item, 'tags'):
+                        writer.writerow(self.tree_reportes.item(item, 'values'))
+                
+            messagebox.showinfo("Exportar", f"Reporte exportado correctamente a:\n{archivo}")
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo exportar el reporte:\n{str(e)}")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = PuntoDeVenta(root)
+    root.mainloop()
